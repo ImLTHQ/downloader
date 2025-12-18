@@ -51,7 +51,7 @@ def format_size(size):
     Returns:
         str: 格式化后的大小字符串（如：1.23 MB）
     """
-    units = ['B', 'KB', 'MB']
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
     unit_idx = 0
     while size >= 1024 and unit_idx < len(units)-1:
         size /= 1024
