@@ -77,22 +77,22 @@ def update_progress(downloaded, total, speed):
     
     Args:
         downloaded (int): 已下载的字节数
-        total (int): 文件总大小（字节）
+        total (int): 文件总大小（字节），0表示未知大小
         speed (int): 当前下载速度（字节/秒）
     """
-    if total == 0:
-        percent = 100
-    else:
-        percent = downloaded / total * 100
-
     # 格式化速率（字节/秒 → KB/s/MB/s）
     speed_str = format_size(speed) + '/s'
-    
     downloaded_str = format_size(downloaded)
-    total_str = format_size(total)
     
-    # 输出简洁的进度信息（覆盖当前行）
-    sys.stdout.write(f'\r{percent:.1f}% ({downloaded_str}/{total_str}) {speed_str}')
+    if total == 0:
+        # 文件大小未知，只显示下载速度
+        sys.stdout.write(f'\r下载速度: {speed_str}')
+    else:
+        percent = downloaded / total * 100
+        total_str = format_size(total)
+        # 输出简洁的进度信息（覆盖当前行）
+        sys.stdout.write(f'\r{percent:.1f}% ({downloaded_str}/{total_str}) {speed_str}')
+    
     sys.stdout.flush()
 
 def check_file_integrity(file_path, expected_size):
@@ -169,14 +169,64 @@ def download_with_auto_resume(url, output_path=None, retry_interval=0):
 
 # 第一步：获取文件总大小和服务器信息
     try:
+        print(f'正在获取文件信息...')
         head_response = requests.head(url, proxies=proxies, timeout=10, verify=False, allow_redirects=True)
         head_response.raise_for_status()
         file_size = int(head_response.headers.get('Content-Length', 0))
+        
+        # 检查响应状态和头部信息
+        print(f'HTTP状态码: {head_response.status_code}')
+        print(f'Content-Type: {head_response.headers.get("Content-Type", "未知")}')
+        print(f'Content-Length: {file_size} 字节')
+        
         if file_size == 0:
-            print('无法获取文件大小，下载失败')
-            return False
+            print('服务器未返回文件大小信息')
+            print('可能原因：')
+            print('1. 服务器不支持HEAD请求')
+            print('2. 文件大小未知（动态生成的文件）')
+            print('3. 服务器配置问题')
+            print('4. 需要特殊的请求头或认证')
+            print('\n将尝试使用GET请求获取文件信息...')
+            
+            # 备用方案：使用GET请求获取前几字节来判断
+            try:
+                get_response = requests.get(url, proxies=proxies, timeout=10, verify=False, 
+                                        allow_redirects=True, stream=True, headers={'Range': 'bytes=0-1023'})
+                get_response.raise_for_status()
+                content_range = get_response.headers.get('Content-Range', '')
+                if content_range:
+                    # 从Content-Range提取总大小，格式如 "bytes 0-1023/12345"
+                    total_size = content_range.split('/')[-1]
+                    if total_size.isdigit():
+                        file_size = int(total_size)
+                        print(f'通过GET请求获取到文件大小: {format_size(file_size)}')
+            except Exception as backup_e:
+                print(f'备用方案也失败: {str(backup_e)}')
+                print('无法确定文件大小，将尝试下载（无法显示进度）')
+                file_size = 0  # 设为0表示未知大小
+        
+        if file_size == 0:
+            print('无法获取文件大小，将尝试无进度下载')
+            # 这里可以选择继续下载或返回False，选择继续尝试
+            
+    except requests.exceptions.Timeout:
+        print('连接超时，请检查网络连接或URL是否正确')
+        return False
+    except requests.exceptions.ConnectionError:
+        print('连接错误，请检查网络连接或URL是否有效')
+        return False
+    except requests.exceptions.HTTPError as e:
+        print(f'HTTP错误: {e.response.status_code} {e.response.reason}')
+        if e.response.status_code == 404:
+            print('文件不存在或URL错误')
+        elif e.response.status_code == 403:
+            print('访问被拒绝，可能需要认证或Referer')
+        elif e.response.status_code == 401:
+            print('需要身份验证')
+        return False
     except Exception as e:
-        print(f'获取文件信息失败')
+        print(f'获取文件信息失败: {str(e)}')
+        print('可能原因：网络问题、URL错误、服务器拒绝访问等')
         return False
 
 # 第二步：初始化下载参数
@@ -184,7 +234,10 @@ def download_with_auto_resume(url, output_path=None, retry_interval=0):
     attempt_count = 0
     success = False
 
-    print(f'开始下载：{filename}（总大小：{format_size(file_size)}）')
+    if file_size > 0:
+        print(f'开始下载：{filename}（总大小：{format_size(file_size)}）')
+    else:
+        print(f'开始下载：{filename}（文件大小未知）')
 
     # 第三步：无限重试直到下载完成或用户中断
     while not success:
@@ -193,23 +246,32 @@ def download_with_auto_resume(url, output_path=None, retry_interval=0):
         # 检查现有文件进度并确定续传位置
         if os.path.exists(file_path):
             current_size = os.path.getsize(file_path)
-            if current_size >= file_size:
-                if check_file_integrity(file_path, file_size):
-                    print(f'\n文件已完整！保存至：{file_path}')
-                    success = True
-                    break
+            if file_size > 0:
+                # 有文件大小信息时的处理
+                if current_size >= file_size:
+                    if check_file_integrity(file_path, file_size):
+                        print(f'\n文件已完整！')
+                        print(f'文件目录：{file_path.parent}')
+                        print(f'文件名称：{file_path.name}')
+                        success = True
+                        break
+                    else:
+                        # 文件损坏，重新下载
+                        os.remove(file_path)
+                        resume_pos = 0
+                        print('检测到文件损坏，重新开始下载')
                 else:
-                    # 文件损坏，重新下载
-                    os.remove(file_path)
-                    resume_pos = 0
-                    print('检测到文件损坏，重新开始下载')
+                    resume_pos = current_size
             else:
-                resume_pos = current_size
+                # 文件大小未知时，重新下载以确保完整性
+                os.remove(file_path)
+                resume_pos = 0
+                print(f'发现已存在文件（{format_size(current_size)}），但文件大小未知，将重新下载以确保完整性')
         else:
             resume_pos = 0
 
-        # 跳过已完成的情况
-        if resume_pos >= file_size:
+        # 跳过已完成的情况（仅在知道文件大小时检查）
+        if file_size > 0 and resume_pos >= file_size:
             success = True
             break
 
@@ -262,7 +324,12 @@ def download_with_auto_resume(url, output_path=None, retry_interval=0):
                             last_downloaded = resume_pos
 
             # 第六步：验证下载完整性
-            if check_file_integrity(file_path, file_size):
+            if file_size > 0:
+                # 有文件大小信息时进行完整性验证
+                if check_file_integrity(file_path, file_size):
+                    success = True
+            else:
+                # 文件大小未知，认为下载完成即可
                 success = True
             break
 
@@ -271,14 +338,20 @@ def download_with_auto_resume(url, output_path=None, retry_interval=0):
             speed = 0
             update_progress(resume_pos, file_size, speed)
             print(f'\n第{attempt_count}次尝试失败')
-            print(f'当前已下载：{format_size(resume_pos)}/{format_size(file_size)}')
+            if file_size > 0:
+                print(f'当前已下载：{format_size(resume_pos)}/{format_size(file_size)}')
+            else:
+                print(f'当前已下载：{format_size(resume_pos)}')
             print(f'等待{retry_interval}秒后自动重试...')
             time.sleep(retry_interval)
         except KeyboardInterrupt:
             # 用户中断处理
             speed = 0
             update_progress(resume_pos, file_size, speed)
-            print(f'\n\n用户中断下载，已保存进度：{format_size(resume_pos)}')
+            if file_size > 0:
+                print(f'\n\n用户中断下载，已保存进度：{format_size(resume_pos)}/{format_size(file_size)}')
+            else:
+                print(f'\n\n用户中断下载，已保存进度：{format_size(resume_pos)}')
             print(f'文件路径：{file_path}（再次执行脚本可继续下载）')
             return False
         except Exception as e:
@@ -286,6 +359,10 @@ def download_with_auto_resume(url, output_path=None, retry_interval=0):
             speed = 0
             update_progress(resume_pos, file_size, speed)
             print(f'\n未知错误: {str(e)}')
+            if file_size > 0:
+                print(f'当前已下载：{format_size(resume_pos)}/{format_size(file_size)}')
+            else:
+                print(f'当前已下载：{format_size(resume_pos)}')
             print(f'等待{retry_interval}秒后自动重试...')
             time.sleep(retry_interval)
 
