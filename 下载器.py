@@ -1,27 +1,13 @@
 """
 高级文件下载器
 
-一个功能强大的Python下载工具，支持多种高级特性以确保文件下载的可靠性和效率。
+一个功能强大的Python下载工具，支持断点续传、智能重试、实时进度显示。
 
-核心功能：
-- 断点续传：支持从上次中断的位置继续下载
-- 智能重试：自动重试机制，确保下载完成
-- 代理支持：兼容HTTP代理（支持v2ray、clash等工具）
-- 速度监控：实时显示下载进度和速度
-- 完整性校验：自动验证下载文件的完整性
-- SSL处理：自动忽略SSL证书验证错误，解决HTTPS下载问题
-
-使用方法：
-python 下载器.py -l <下载链接> [选项]
-
-示例：
-python 下载器.py -l https://example.com/file.zip
-python 下载器.py -l https://example.com/file.zip -p 127.0.0.1:8080 -r 5
+使用方法：python 下载器.py
 """
 
 import os
 import sys
-import argparse
 import time
 import requests
 from pathlib import Path
@@ -134,52 +120,11 @@ def check_file_integrity(file_path, expected_size):
         return True
     return False
 
-def create_proxies(proxy_url):
-    """
-    HTTP代理配置生成器
-    
-    解析代理地址并创建requests库所需的代理配置字典。
-    支持格式验证和端口范围检查，确保代理配置的有效性。
-    生成的代理会同时应用于HTTP和HTTPS请求。
-    
-    Args:
-        proxy_url (str): 代理服务器地址，格式为"IP:端口"（如"127.0.0.1:8080"）
-        
-    Returns:
-        dict: 包含'http'和'https'键的代理配置字典
-        
-    Raises:
-        ValueError: 当代理地址格式无效或端口超出范围时抛出
-    """
-    if not proxy_url:
-        return None
-    
-    # 检查代理格式，应该为 地址:端口
-    if ':' not in proxy_url:
-        raise ValueError('代理地址格式错误，应为：地址:端口（如：127.0.0.1:8080）')
-    
-    # 验证端口是否为数字
-    parts = proxy_url.split(':')
-    if len(parts) != 2:
-        raise ValueError('代理地址格式错误，应为：地址:端口（如：127.0.0.1:8080）')
-    
-    try:
-        port = int(parts[1])
-        if port < 1 or port > 65535:
-            raise ValueError('端口号应在1-65535之间')
-    except ValueError:
-        raise ValueError('端口号必须是数字')
-    
-    # 设置HTTP代理（同时用于HTTPS）
-    http_proxy = f'http://{proxy_url}'
-    return {
-        'http': http_proxy,
-        'https': http_proxy
-    }
 
 
 
-def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=3):
+
+def download_with_auto_resume(url, output_path=None, retry_interval=0):
     """
     智能断点续传下载引擎
     
@@ -187,19 +132,16 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
     采用七步下载策略：信息获取→参数初始化→重试循环→请求构建→
     流式下载→完整性验证→结果返回。支持多种异常处理和用户交互。
     
-    支持的高级特性：
+    支持的特性：
     • 智能断点续传：自动检测已有文件，从中断位置继续
     • 无限重试机制：网络异常时自动重试，直到下载完成
     • 实时速度监控：动态显示下载进度和当前速度
-    • 代理兼容性：完美支持HTTP代理（v2ray、clash等工具）
     • SSL证书处理：自动忽略SSL验证，解决HTTPS下载问题
-    • 自定义路径：支持指定下载目录，默认使用系统下载文件夹
     
     Args:
         url (str): 目标文件的下载链接地址
-        proxy (str, optional): HTTP代理服务器地址，格式"IP:端口"
         output_path (str, optional): 自定义下载目录路径，默认使用系统下载目录
-        retry_interval (int): 网络异常时的重试等待时间（秒），默认3秒
+        retry_interval (int): 网络异常时的重试等待时间（秒），默认0秒
         
     Returns:
         bool: 下载成功返回True，失败或用户中断返回False
@@ -223,7 +165,7 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
         filename = get_filename_from_url(url)
         file_path = download_dir / filename
     
-    proxies = create_proxies(proxy)
+    proxies = None
 
 # 第一步：获取文件总大小和服务器信息
     try:
@@ -243,9 +185,6 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
     success = False
 
     print(f'开始下载：{filename}（总大小：{format_size(file_size)}）')
-    if proxy:
-        print(f'使用代理：{proxy}')
-    print(f'重试间隔：{retry_interval}秒')
 
     # 第三步：无限重试直到下载完成或用户中断
     while not success:
@@ -356,62 +295,47 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
         print(f'\n\n下载完成！文件保存至：{file_path}')
         return True
 
+def get_user_input():
+    """
+    交互式用户输入获取器
+    
+    通过命令行交互获取下载链接。
+    
+    Returns:
+        str: 下载链接
+    """
+    # 获取下载链接
+    while True:
+        url = input("请输入下载链接: ").strip()
+        if url:
+            break
+        print("下载链接不能为空，请重新输入！")
+    
+    print(f"开始下载: {url}")
+    
+    return url
+
 def main():
     """
-    程序入口点 - 命令行参数解析器
+    程序入口点 - 交互式界面
     
-    解析用户输入的命令行参数，配置下载选项，然后启动下载流程。
-    提供友好的命令行界面和详细的帮助信息。
+    提供友好的命令行交互界面，引导用户输入下载参数。
+    无需命令行参数，启动后通过交互获取所有必要信息。
     
-    HTTP代理配置说明：
-    • 支持格式：IP地址:端口号（例如：127.0.0.1:8080）
-    • 兼容工具：v2ray、clash、shadowsocks等代理工具的HTTP端口
-    • 限制说明：仅支持HTTP代理协议，不支持SOCKS5和HTTPS代理
-    • SSL处理：默认自动忽略SSL证书验证，解决HTTPS下载问题
+    交互流程：
+    1. 获取下载链接（必填）
+    2. 直接开始下载（重试延迟固定为0秒）
     
-    使用示例：
-    基础下载：     python 下载器.py -l https://example.com/file.zip
-    代理下载：     python 下载器.py -l https://example.com/file.zip -p 127.0.0.1:8080
-    自定义路径：   python 下载器.py -l https://example.com/file.zip -o "D:\\MyDownloads"
-    调整重试：     python 下载器.py -l https://example.com/file.zip -r 10
+    注意事项：
+    • 支持HTTP/HTTPS下载，自动处理SSL证书验证问题
+    • 支持Ctrl+C中断并保存下载进度
+    • 自动检测文件完整性，损坏文件会重新下载
     """
-    parser = argparse.ArgumentParser(
-        description='高级文件下载器 - 智能断点续传、代理支持、自动重试',
-        epilog="""
-使用示例：
-  %(prog)s -l https://example.com/file.zip
-  %(prog)s -l https://example.com/file.zip -p 127.0.0.1:8080
-  %(prog)s -l https://example.com/file.zip -o "D:\\Downloads" -r 5
-  %(prog)s -l https://example.com/largefile.iso -t 8 -r 5
-  %(prog)s -l https://example.com/file.zip -p 127.0.0.1:8080
-
-注意事项：
-  • 支持HTTP代理格式：IP:端口（如127.0.0.1:8080）
-  • 兼容v2ray、clash等代理工具的HTTP端口
-  • 自动处理SSL证书验证问题
-  • 支持Ctrl+C中断并保存下载进度
-  • 自动检测文件完整性，损坏文件会重新下载
-        """,
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    # 获取用户输入
+    url = get_user_input()
     
-    parser.add_argument('-l', '--link', required=True, 
-                       help='目标文件的下载链接地址（必填参数）')
-    parser.add_argument('-p', '--proxy', default=None, 
-                       help='HTTP代理服务器地址（格式：IP:端口，如127.0.0.1:8080）\n'
-                            '支持v2ray、clash等工具的HTTP代理端口')
-    parser.add_argument('-o', '--output', default=None, 
-                       help='文件保存目录路径（可选，默认使用系统下载文件夹）\n'
-                            '注意：参数应为文件夹路径，不是文件名')
-    parser.add_argument('-r', '--retry', type=int, default=3, 
-                       help='网络异常时的重试等待时间（秒，默认值：3）\n'
-                            '建议范围：1-30秒，过短可能加重服务器负担')
-
-    
-    args = parser.parse_args()
-
     # 启动下载
-    download_with_auto_resume(args.link, args.proxy, args.output, args.retry)
+    download_with_auto_resume(url)
 
 if __name__ == '__main__':
     main()
