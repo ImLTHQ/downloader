@@ -10,13 +10,8 @@ import urllib3
 # SSL警告将在需要时屏蔽
 
 def get_download_path():
-    #   获取系统默认下载文件夹
-    if sys.platform == 'win32':
-        download_path = Path(os.environ['USERPROFILE']) / 'Downloads'
-    elif sys.platform == 'darwin':
-        download_path = Path(os.environ['HOME']) / 'Downloads'
-    else:
-        download_path = Path(os.environ['HOME']) / 'Downloads'
+    #   获取Windows系统默认下载文件夹
+    download_path = Path(os.environ['USERPROFILE']) / 'Downloads'
     download_path.mkdir(exist_ok=True)
     return download_path
 
