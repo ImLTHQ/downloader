@@ -11,7 +11,7 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_download_path():
-    """获取系统默认下载文件夹"""
+    #   获取系统默认下载文件夹
     if sys.platform == 'win32':
         download_path = Path(os.environ['USERPROFILE']) / 'Downloads'
     elif sys.platform == 'darwin':
@@ -22,7 +22,7 @@ def get_download_path():
     return download_path
 
 def get_filename_from_url(url):
-    """提取文件名（去除URL参数）"""
+    #   提取文件名（去除URL参数）
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
     if not filename:
@@ -30,8 +30,17 @@ def get_filename_from_url(url):
     filename = filename.split('?')[0]
     return filename
 
-def update_progress(downloaded, total):
-    """可视化进度条"""
+def format_size(size):
+    #   字节数格式化(B/KB/MB/GB)
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    unit_idx = 0
+    while size >= 1024 and unit_idx < len(units)-1:
+        size /= 1024
+        unit_idx += 1
+    return f"{size:.2f} {units[unit_idx]}"
+
+def update_progress(downloaded, total, speed):
+    #   可视化进度条 + 实时下载速率
     bar_length = 50
     if total == 0:
         percent = 100
@@ -40,22 +49,17 @@ def update_progress(downloaded, total):
     filled_length = int(bar_length * downloaded // total)
     bar = '█' * filled_length + '-' * (bar_length - filled_length)
 
-    # 字节数格式化
-    def format_size(size):
-        units = ['B', 'KB', 'MB', 'GB', 'TB']
-        unit_idx = 0
-        while size >= 1024 and unit_idx < len(units)-1:
-            size /= 1024
-            unit_idx += 1
-        return f"{size:.2f} {units[unit_idx]}"
+    # 格式化速率（字节/秒 → KB/s/MB/s）
+    speed_str = format_size(speed) + '/s'
     
     downloaded_str = format_size(downloaded)
     total_str = format_size(total)
-    sys.stdout.write(f'\r下载进度：|{bar}| {percent:.1f}% ({downloaded_str}/{total_str})')
+    # 输出进度条（覆盖当前行）
+    sys.stdout.write(f'\r下载进度：|{bar}| {percent:.1f}% ({downloaded_str}/{total_str}) 速率：{speed_str}')
     sys.stdout.flush()
 
 def check_file_integrity(file_path, expected_size):
-    """校验文件完整性"""
+    #   校验文件完整性
     if not os.path.exists(file_path):
         return False
     actual_size = os.path.getsize(file_path)
@@ -67,8 +71,8 @@ def check_file_integrity(file_path, expected_size):
         return True
     return False
 
-def download_with_auto_resume(url, proxy=None, max_attempts=100):
-    """核心功能：断连后自动续传，直到下载完成或达到最大尝试次数"""
+def download_with_auto_resume(url, proxy=None, retry_interval=3):
+    #   重试 + 无限续传 + 速率显示
     download_dir = get_download_path()
     filename = get_filename_from_url(url)
     file_path = download_dir / filename
@@ -87,15 +91,15 @@ def download_with_auto_resume(url, proxy=None, max_attempts=100):
         return False
 
     # 2. 初始化参数
-    attempt_count = 0
     resume_pos = 0
+    attempt_count = 0
     success = False
 
     print(f'开始下载：{filename}（总大小：{format_size(file_size)}）')
-    print(f'代理地址：{proxy if proxy else "无"}')
-    print(f'最大自动续传次数：{max_attempts}')
+    print(f'重试间隔：{retry_interval}秒')
 
-    while attempt_count < max_attempts and not success:
+    # 无限重试直到下载完成或用户中断
+    while not success:
         attempt_count += 1
         # 检查现有文件进度
         if os.path.exists(file_path):
@@ -132,22 +136,34 @@ def download_with_auto_resume(url, proxy=None, max_attempts=100):
                 headers=headers,
                 proxies=proxies,
                 stream=True,
-                timeout=300,  # 5分钟超时，适配慢代理
+                timeout=300,  # 5分钟超时
                 verify=False,
                 allow_redirects=True
             )
             response.raise_for_status()
 
-            # 写入文件
+            # 写入文件 + 计算实时速率
             mode = 'ab' if resume_pos > 0 else 'wb'
             with open(file_path, mode) as f:
                 downloaded_in_this_attempt = 0
+                start_time = time.time()
+                last_check_time = start_time
+                last_downloaded = resume_pos
+
                 for chunk in response.iter_content(chunk_size=4096):
                     if chunk:
                         f.write(chunk)
                         resume_pos += len(chunk)
                         downloaded_in_this_attempt += len(chunk)
-                        update_progress(resume_pos, file_size)
+                        
+                        # 每秒计算一次下载速率
+                        current_time = time.time()
+                        if current_time - last_check_time >= 1:
+                            # 计算1秒内下载的字节数
+                            speed = int((resume_pos - last_downloaded) / (current_time - last_check_time))
+                            update_progress(resume_pos, file_size, speed)
+                            last_check_time = current_time
+                            last_downloaded = resume_pos
 
             # 检查本次尝试后是否完成
             if check_file_integrity(file_path, file_size):
@@ -155,44 +171,41 @@ def download_with_auto_resume(url, proxy=None, max_attempts=100):
                 break
 
         except requests.exceptions.RequestException as e:
+            # 计算本次尝试的最终速率
+            speed = 0
+            update_progress(resume_pos, file_size, speed)
             print(f'\n第{attempt_count}次尝试失败：{e}')
             print(f'当前已下载：{format_size(resume_pos)}/{format_size(file_size)}')
-            print('等待5秒后自动重试...')
-            time.sleep(5)  # 失败后等待5秒再重试，降低代理压力
+            print(f'等待{retry_interval}秒后自动重试...')
+            time.sleep(retry_interval)  # 3秒重试间隔
         except KeyboardInterrupt:
-            print(f'\n用户中断下载，已保存进度：{format_size(resume_pos)}')
+            # 用户中断时显示最终进度
+            speed = 0
+            update_progress(resume_pos, file_size, speed)
+            print(f'\n\n用户中断下载，已保存进度：{format_size(resume_pos)}')
+            print(f'文件路径：{file_path}（再次执行脚本可继续下载）')
             return False
         except Exception as e:
+            speed = 0
+            update_progress(resume_pos, file_size, speed)
             print(f'\n未知错误：{e}')
-            time.sleep(5)
+            print(f'等待{retry_interval}秒后自动重试...')
+            time.sleep(retry_interval)
 
     # 最终结果
     if success:
-        update_progress(file_size, file_size)
-        print(f'\n下载完成！文件保存至：{file_path}')
+        update_progress(file_size, file_size, 0)
+        print(f'\n\n下载完成！文件保存至：{file_path}')
         return True
-    else:
-        print(f'\n达到最大尝试次数（{max_attempts}次），下载失败')
-        print(f'最后进度：{format_size(resume_pos)}/{format_size(file_size)}')
-        return False
-
-def format_size(size):
-    """辅助函数：字节数格式化"""
-    units = ['B', 'KB', 'MB', 'GB', 'TB']
-    unit_idx = 0
-    while size >= 1024 and unit_idx < len(units)-1:
-        size /= 1024
-        unit_idx += 1
-    return f"{size:.2f} {units[unit_idx]}"
 
 def main():
-    parser = argparse.ArgumentParser(description='断连自动续传下载工具（适配不稳定代理）')
+    parser = argparse.ArgumentParser(description='下载工具')
     parser.add_argument('-l', '--link', required=True, help='下载链接（必填）')
     parser.add_argument('-p', '--proxy', default=None, help='HTTP代理，格式如127.0.0.1:6666')
-    parser.add_argument('-m', '--max-attempts', type=int, default=100, help='最大自动重试次数，默认100')
+    parser.add_argument('-r', '--retry-interval', type=int, default=3, help='重试间隔（秒），默认3')
     args = parser.parse_args()
 
-    download_with_auto_resume(args.link, args.proxy, args.max_attempts)
+    download_with_auto_resume(args.link, args.proxy, args.retry_interval)
 
 if __name__ == '__main__':
     main()
