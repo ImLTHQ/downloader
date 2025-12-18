@@ -102,19 +102,21 @@ def check_file_integrity(file_path, expected_size):
 
 def create_proxies(proxy_url):
     """
-    创建代理配置字典，支持HTTP和HTTPS代理
+    创建代理配置字典，支持HTTP、HTTPS和SOCKS5代理
     Args:
-        proxy_url (str): 代理URL，支持多种格式
+        proxy_url (str): 代理URL，必须包含协议前缀：
+                        - http://地址:端口
+                        - https://地址:端口
+                        - socks5://地址:端口
     Returns:
         dict: 代理配置字典，包含http和https键
     """
     if not proxy_url:
         return None
     
-    # 自动检测代理协议并补全
+    # 检查代理格式，必须包含协议前缀
     if not proxy_url.startswith(('http://', 'https://', 'socks5://')):
-        # 默认使用HTTP代理
-        proxy_url = f'http://{proxy_url}'
+        raise ValueError('代理地址必须包含协议前缀，如：http://127.0.0.1:8080, https://127.0.0.1:8080, socks5://127.0.0.1:1080')
     
     # 同时设置HTTP和HTTPS代理
     return {
@@ -122,19 +124,21 @@ def create_proxies(proxy_url):
         'https': proxy_url
     }
 
-def download_with_auto_resume(url, proxy=None, retry_interval=3, ignore_ssl_errors=False):
+def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=3, ignore_ssl_errors=False):
     """
     自动断点续传下载函数
     支持功能：
     - 断点续传
     - 无限重试机制
     - 实时速度显示
-    - HTTP/HTTPS代理支持
+    - HTTP/HTTPS/SOCKS5代理支持
     - SSL证书验证控制
+    - 自定义下载路径
     
     Args:
         url (str): 下载链接
-        proxy (str): 代理地址（支持格式：127.0.0.1:6666, http://127.0.0.1:6666, https://127.0.0.1:6666, socks5://127.0.0.1:1080）
+        proxy (str): 代理地址（必须包含协议前缀：http://地址:端口, https://地址:端口, socks5://地址:端口）
+        output_path (str): 自定义下载目录路径（可选，默认为系统下载目录）
         retry_interval (int): 重试间隔（秒）
         ignore_ssl_errors (bool): 是否忽略SSL错误
         
@@ -145,9 +149,17 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3, ignore_ssl_erro
     if ignore_ssl_errors:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
-    download_dir = get_download_path()
-    filename = get_filename_from_url(url)
-    file_path = download_dir / filename
+    # 使用自定义下载目录或默认下载目录
+    if output_path:
+        download_dir = Path(output_path)
+        download_dir.mkdir(exist_ok=True)
+        filename = get_filename_from_url(url)
+        file_path = download_dir / filename
+    else:
+        download_dir = get_download_path()
+        filename = get_filename_from_url(url)
+        file_path = download_dir / filename
+    
     proxies = create_proxies(proxy)
 
 # 第一步：获取文件总大小和服务器信息
@@ -291,9 +303,9 @@ def main():
     """
     主函数：解析命令行参数并启动下载
     支持的代理格式：
-    - HTTP代理：127.0.0.1:6666 或 http://127.0.0.1:6666
-    - HTTPS代理：https://127.0.0.1:6666
-    - SOCKS5代理：socks5://127.0.0.1:1080
+    - http://地址:端口
+    - https://地址:端口
+    - socks5://地址:端口
     """
     parser = argparse.ArgumentParser(
         description='强大的文件下载工具 - 支持断点续传、代理、重试机制'
@@ -302,8 +314,10 @@ def main():
     parser.add_argument('-l', '--link', required=True, 
                        help='下载链接 (必填)')
     parser.add_argument('-p', '--proxy', default=None, 
-                       help='代理地址 (支持HTTP/HTTPS/SOCKS5代理，格式：127.0.0.1:6666 或 http://127.0.0.1:6666)')
-    parser.add_argument('-r', '--retry-interval', type=int, default=3, 
+                       help='代理地址 (必须包含协议前缀：http://地址:端口, https://地址:端口, socks5://地址:端口)')
+    parser.add_argument('-o', '--output', default=None, 
+                       help='输出目录路径 (只能是文件夹)')
+    parser.add_argument('-r', '--retry', type=int, default=3, 
                        help='重试间隔（秒，默认3秒）')
     parser.add_argument('-i', '--ignore', action='store_true', 
                        help='忽略SSL警告且不显示详细错误信息')
@@ -311,7 +325,7 @@ def main():
     args = parser.parse_args()
 
     # 启动下载
-    download_with_auto_resume(args.link, args.proxy, args.retry_interval, args.ignore)
+    download_with_auto_resume(args.link, args.proxy, args.output, args.retry, args.ignore)
 
 if __name__ == '__main__':
     main()
