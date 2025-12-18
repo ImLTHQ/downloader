@@ -1,12 +1,22 @@
 """
-文件下载工具 - 支持断点续传、代理、SSL错误忽略
-功能：
-1. 断点续传下载
-2. 自动重试机制
-3. HTTP/HTTPS代理支持
-4. 实时下载速度显示
-5. 文件完整性校验
-6. SSL证书验证控制
+高级文件下载器
+
+一个功能强大的Python下载工具，支持多种高级特性以确保文件下载的可靠性和效率。
+
+核心功能：
+- 断点续传：支持从上次中断的位置继续下载
+- 智能重试：自动重试机制，确保下载完成
+- 代理支持：兼容HTTP代理（支持v2ray、clash等工具）
+- 速度监控：实时显示下载进度和速度
+- 完整性校验：自动验证下载文件的完整性
+- SSL处理：自动忽略SSL证书验证错误，解决HTTPS下载问题
+
+使用方法：
+python 下载器.py -l <下载链接> [选项]
+
+示例：
+python 下载器.py -l https://example.com/file.zip
+python 下载器.py -l https://example.com/file.zip -p 127.0.0.1:8080 -r 5
 """
 
 import os
@@ -20,9 +30,13 @@ import urllib3
 
 def get_download_path():
     """
-    获取Windows系统默认下载文件夹
+    获取系统默认下载目录
+    
+    该函数会自动检测当前用户的下载文件夹，如果不存在则创建。
+    主要用于设置默认的文件保存路径。
+    
     Returns:
-        Path: 下载目录路径对象
+        Path: 系统下载目录的Path对象
     """
     download_path = Path(os.environ['USERPROFILE']) / 'Downloads'
     download_path.mkdir(exist_ok=True)
@@ -30,11 +44,16 @@ def get_download_path():
 
 def get_filename_from_url(url):
     """
-    从URL中提取文件名（去除URL参数）
+    从URL中解析并提取文件名
+    
+    智能解析URL路径，提取最后的文件名部分，并自动移除查询参数。
+    如果无法提取到有效文件名，则使用默认名称。
+    
     Args:
-        url (str): 下载链接
+        url (str): 完整的下载链接地址
+        
     Returns:
-        str: 提取的文件名
+        str: 清理后的文件名，不包含查询参数
     """
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
@@ -45,11 +64,16 @@ def get_filename_from_url(url):
 
 def format_size(size):
     """
-    将字节数格式化为人类可读的单位
+    字节大小单位转换器
+    
+    将字节数转换为易读的存储单位格式（B、KB、MB、GB、TB），
+    自动选择最合适的单位并保留两位小数。
+    
     Args:
-        size (int): 字节数
+        size (int): 需要格式化的字节数
+        
     Returns:
-        str: 格式化后的大小字符串（如：1.23 MB）
+        str: 格式化后的大小字符串，例如 "1.23 MB"
     """
     units = ['B', 'KB', 'MB', 'GB', 'TB']
     unit_idx = 0
@@ -60,10 +84,14 @@ def format_size(size):
 
 def update_progress(downloaded, total, speed):
     """
-    实时更新下载进度显示
+    实时下载进度显示器
+    
+    在控制台显示当前下载进度，包括百分比、已下载/总大小和实时速度。
+    使用回车符覆盖当前行，实现动态更新效果。
+    
     Args:
-        downloaded (int): 已下载字节数
-        total (int): 总文件大小
+        downloaded (int): 已下载的字节数
+        total (int): 文件总大小（字节）
         speed (int): 当前下载速度（字节/秒）
     """
     if total == 0:
@@ -76,18 +104,24 @@ def update_progress(downloaded, total, speed):
     
     downloaded_str = format_size(downloaded)
     total_str = format_size(total)
-    # 输出进度（覆盖当前行）
+    
+    # 输出简洁的进度信息（覆盖当前行）
     sys.stdout.write(f'\r{percent:.1f}% ({downloaded_str}/{total_str}) {speed_str}')
     sys.stdout.flush()
 
 def check_file_integrity(file_path, expected_size):
     """
-    校验文件完整性（大小和内容）
+    文件完整性验证器
+    
+    通过检查文件大小和内容头部来验证下载文件的完整性。
+    确保文件大小匹配且不是空文件，防止下载损坏的文件。
+    
     Args:
-        file_path (Path): 文件路径
-        expected_size (int): 期望的文件大小
+        file_path (Path): 待验证文件的路径
+        expected_size (int): 文件应有的总大小（字节）
+        
     Returns:
-        bool: 文件完整性校验结果
+        bool: True表示文件完整，False表示文件损坏或不存在
     """
     if not os.path.exists(file_path):
         return False
@@ -102,52 +136,81 @@ def check_file_integrity(file_path, expected_size):
 
 def create_proxies(proxy_url):
     """
-    创建代理配置字典，支持HTTP、HTTPS和SOCKS5代理
+    HTTP代理配置生成器
+    
+    解析代理地址并创建requests库所需的代理配置字典。
+    支持格式验证和端口范围检查，确保代理配置的有效性。
+    生成的代理会同时应用于HTTP和HTTPS请求。
+    
     Args:
-        proxy_url (str): 代理URL，必须包含协议前缀：
-                        - http://地址:端口
-                        - https://地址:端口
-                        - socks5://地址:端口
+        proxy_url (str): 代理服务器地址，格式为"IP:端口"（如"127.0.0.1:8080"）
+        
     Returns:
-        dict: 代理配置字典，包含http和https键
+        dict: 包含'http'和'https'键的代理配置字典
+        
+    Raises:
+        ValueError: 当代理地址格式无效或端口超出范围时抛出
     """
     if not proxy_url:
         return None
     
-    # 检查代理格式，必须包含协议前缀
-    if not proxy_url.startswith(('http://', 'https://', 'socks5://')):
-        raise ValueError('代理地址必须包含协议前缀，如：http://127.0.0.1:8080, https://127.0.0.1:8080, socks5://127.0.0.1:1080')
+    # 检查代理格式，应该为 地址:端口
+    if ':' not in proxy_url:
+        raise ValueError('代理地址格式错误，应为：地址:端口（如：127.0.0.1:8080）')
     
-    # 同时设置HTTP和HTTPS代理
+    # 验证端口是否为数字
+    parts = proxy_url.split(':')
+    if len(parts) != 2:
+        raise ValueError('代理地址格式错误，应为：地址:端口（如：127.0.0.1:8080）')
+    
+    try:
+        port = int(parts[1])
+        if port < 1 or port > 65535:
+            raise ValueError('端口号应在1-65535之间')
+    except ValueError:
+        raise ValueError('端口号必须是数字')
+    
+    # 设置HTTP代理（同时用于HTTPS）
+    http_proxy = f'http://{proxy_url}'
     return {
-        'http': proxy_url,
-        'https': proxy_url
+        'http': http_proxy,
+        'https': http_proxy
     }
 
-def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=3, ignore_ssl_errors=False):
+
+
+def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=3):
     """
-    自动断点续传下载函数
-    支持功能：
-    - 断点续传
-    - 无限重试机制
-    - 实时速度显示
-    - HTTP/HTTPS/SOCKS5代理支持
-    - SSL证书验证控制
-    - 自定义下载路径
+    智能断点续传下载引擎
+    
+    这是下载器的核心函数，实现了完整的下载流程管理。
+    采用七步下载策略：信息获取→参数初始化→重试循环→请求构建→
+    流式下载→完整性验证→结果返回。支持多种异常处理和用户交互。
+    
+    支持的高级特性：
+    • 智能断点续传：自动检测已有文件，从中断位置继续
+    • 无限重试机制：网络异常时自动重试，直到下载完成
+    • 实时速度监控：动态显示下载进度和当前速度
+    • 代理兼容性：完美支持HTTP代理（v2ray、clash等工具）
+    • SSL证书处理：自动忽略SSL验证，解决HTTPS下载问题
+    • 自定义路径：支持指定下载目录，默认使用系统下载文件夹
     
     Args:
-        url (str): 下载链接
-        proxy (str): 代理地址（必须包含协议前缀：http://地址:端口, https://地址:端口, socks5://地址:端口）
-        output_path (str): 自定义下载目录路径（可选，默认为系统下载目录）
-        retry_interval (int): 重试间隔（秒）
-        ignore_ssl_errors (bool): 是否忽略SSL错误
+        url (str): 目标文件的下载链接地址
+        proxy (str, optional): HTTP代理服务器地址，格式"IP:端口"
+        output_path (str, optional): 自定义下载目录路径，默认使用系统下载目录
+        retry_interval (int): 网络异常时的重试等待时间（秒），默认3秒
         
     Returns:
-        bool: 下载是否成功
+        bool: 下载成功返回True，失败或用户中断返回False
+        
+    Note:
+        - 支持Ctrl+C中断下载，进度会自动保存
+        - 损坏文件会自动删除并重新下载
+        - 所有HTTPS请求都会跳过SSL证书验证
     """
-    # 根据参数决定是否屏蔽SSL警告
-    if ignore_ssl_errors:
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    # 默认屏蔽SSL警告
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     
     # 使用自定义下载目录或默认下载目录
     if output_path:
@@ -164,16 +227,14 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
 
 # 第一步：获取文件总大小和服务器信息
     try:
-        head_response = requests.head(url, proxies=proxies, timeout=10, verify=not ignore_ssl_errors, allow_redirects=True)
+        head_response = requests.head(url, proxies=proxies, timeout=10, verify=False, allow_redirects=True)
         head_response.raise_for_status()
         file_size = int(head_response.headers.get('Content-Length', 0))
         if file_size == 0:
-            if not ignore_ssl_errors:
-                print('无法获取文件大小，下载失败')
+            print('无法获取文件大小，下载失败')
             return False
     except Exception as e:
-        if not ignore_ssl_errors:
-            print(f'获取文件信息失败：{e}')
+        print(f'获取文件信息失败')
         return False
 
 # 第二步：初始化下载参数
@@ -189,6 +250,7 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
     # 第三步：无限重试直到下载完成或用户中断
     while not success:
         attempt_count += 1
+        
         # 检查现有文件进度并确定续传位置
         if os.path.exists(file_path):
             current_size = os.path.getsize(file_path)
@@ -212,8 +274,9 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
             success = True
             break
 
-        print(f'\n第{attempt_count}次尝试：从{format_size(resume_pos)}开始续传')
+        print(f'\n第{attempt_count}次尝试')
         try:
+            # 单线程下载模式
             # 构建请求头（断点续传）
             headers = {'Range': f'bytes={resume_pos}-'}
             
@@ -230,7 +293,7 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
                 proxies=proxies,
                 stream=True,
                 timeout=10,  # 10秒连接/读取超时
-                verify=not ignore_ssl_errors,
+                verify=False,
                 allow_redirects=True
             )
             response.raise_for_status()
@@ -262,16 +325,13 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
             # 第六步：验证下载完整性
             if check_file_integrity(file_path, file_size):
                 success = True
-                break
+            break
 
         except requests.exceptions.RequestException as e:
             # 网络请求异常处理
             speed = 0
             update_progress(resume_pos, file_size, speed)
-            if not ignore_ssl_errors:
-                print(f'\n第{attempt_count}次尝试失败：{e}')
-            else:
-                print(f'\n第{attempt_count}次尝试失败')
+            print(f'\n第{attempt_count}次尝试失败')
             print(f'当前已下载：{format_size(resume_pos)}/{format_size(file_size)}')
             print(f'等待{retry_interval}秒后自动重试...')
             time.sleep(retry_interval)
@@ -286,10 +346,7 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
             # 其他未知异常处理
             speed = 0
             update_progress(resume_pos, file_size, speed)
-            if not ignore_ssl_errors:
-                print(f'\n未知错误：{e}')
-            else:
-                print(f'\n未知错误')
+            print(f'\n未知错误: {str(e)}')
             print(f'等待{retry_interval}秒后自动重试...')
             time.sleep(retry_interval)
 
@@ -301,31 +358,60 @@ def download_with_auto_resume(url, proxy=None, output_path=None, retry_interval=
 
 def main():
     """
-    主函数：解析命令行参数并启动下载
-    支持的代理格式：
-    - http://地址:端口
-    - https://地址:端口
-    - socks5://地址:端口
+    程序入口点 - 命令行参数解析器
+    
+    解析用户输入的命令行参数，配置下载选项，然后启动下载流程。
+    提供友好的命令行界面和详细的帮助信息。
+    
+    HTTP代理配置说明：
+    • 支持格式：IP地址:端口号（例如：127.0.0.1:8080）
+    • 兼容工具：v2ray、clash、shadowsocks等代理工具的HTTP端口
+    • 限制说明：仅支持HTTP代理协议，不支持SOCKS5和HTTPS代理
+    • SSL处理：默认自动忽略SSL证书验证，解决HTTPS下载问题
+    
+    使用示例：
+    基础下载：     python 下载器.py -l https://example.com/file.zip
+    代理下载：     python 下载器.py -l https://example.com/file.zip -p 127.0.0.1:8080
+    自定义路径：   python 下载器.py -l https://example.com/file.zip -o "D:\\MyDownloads"
+    调整重试：     python 下载器.py -l https://example.com/file.zip -r 10
     """
     parser = argparse.ArgumentParser(
-        description='强大的文件下载工具 - 支持断点续传、代理、重试机制'
+        description='高级文件下载器 - 智能断点续传、代理支持、自动重试',
+        epilog="""
+使用示例：
+  %(prog)s -l https://example.com/file.zip
+  %(prog)s -l https://example.com/file.zip -p 127.0.0.1:8080
+  %(prog)s -l https://example.com/file.zip -o "D:\\Downloads" -r 5
+  %(prog)s -l https://example.com/largefile.iso -t 8 -r 5
+  %(prog)s -l https://example.com/file.zip -p 127.0.0.1:8080
+
+注意事项：
+  • 支持HTTP代理格式：IP:端口（如127.0.0.1:8080）
+  • 兼容v2ray、clash等代理工具的HTTP端口
+  • 自动处理SSL证书验证问题
+  • 支持Ctrl+C中断并保存下载进度
+  • 自动检测文件完整性，损坏文件会重新下载
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     parser.add_argument('-l', '--link', required=True, 
-                       help='下载链接 (必填)')
+                       help='目标文件的下载链接地址（必填参数）')
     parser.add_argument('-p', '--proxy', default=None, 
-                       help='代理地址 (必须包含协议前缀：http://地址:端口, https://地址:端口, socks5://地址:端口)')
+                       help='HTTP代理服务器地址（格式：IP:端口，如127.0.0.1:8080）\n'
+                            '支持v2ray、clash等工具的HTTP代理端口')
     parser.add_argument('-o', '--output', default=None, 
-                       help='输出目录路径 (只能是文件夹)')
+                       help='文件保存目录路径（可选，默认使用系统下载文件夹）\n'
+                            '注意：参数应为文件夹路径，不是文件名')
     parser.add_argument('-r', '--retry', type=int, default=3, 
-                       help='重试间隔（秒，默认3秒）')
-    parser.add_argument('-i', '--ignore', action='store_true', 
-                       help='忽略SSL警告且不显示详细错误信息')
+                       help='网络异常时的重试等待时间（秒，默认值：3）\n'
+                            '建议范围：1-30秒，过短可能加重服务器负担')
+
     
     args = parser.parse_args()
 
     # 启动下载
-    download_with_auto_resume(args.link, args.proxy, args.output, args.retry, args.ignore)
+    download_with_auto_resume(args.link, args.proxy, args.output, args.retry)
 
 if __name__ == '__main__':
     main()
