@@ -7,8 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 import urllib3
 
-# 屏蔽SSL警告
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# SSL警告将在需要时屏蔽
 
 def get_download_path():
     #   获取系统默认下载文件夹
@@ -70,6 +69,10 @@ def check_file_integrity(file_path, expected_size):
 
 def download_with_auto_resume(url, proxy=None, retry_interval=3, ignore_ssl_errors=False):
     #   重试 + 无限续传 + 速率显示
+    # 根据参数决定是否屏蔽SSL警告
+    if ignore_ssl_errors:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
     download_dir = get_download_path()
     filename = get_filename_from_url(url)
     file_path = download_dir / filename
@@ -77,7 +80,7 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3, ignore_ssl_erro
 
     # 1. 获取文件总大小
     try:
-        head_response = requests.head(url, proxies=proxies, timeout=10, verify=False, allow_redirects=True)
+        head_response = requests.head(url, proxies=proxies, timeout=10, verify=not ignore_ssl_errors, allow_redirects=True)
         head_response.raise_for_status()
         file_size = int(head_response.headers.get('Content-Length', 0))
         if file_size == 0:
@@ -136,7 +139,7 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3, ignore_ssl_erro
                 proxies=proxies,
                 stream=True,
                 timeout=10,  # 10秒超时
-                verify=False,
+                verify=not ignore_ssl_errors,
                 allow_redirects=True
             )
             response.raise_for_status()
