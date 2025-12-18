@@ -40,22 +40,19 @@ def format_size(size):
     return f"{size:.2f} {units[unit_idx]}"
 
 def update_progress(downloaded, total, speed):
-    #   可视化进度条 + 实时下载速率
-    bar_length = 50
+    #   显示百分比 + 已下载/总大小 + 速率（无进度条）
     if total == 0:
         percent = 100
     else:
         percent = downloaded / total * 100
-    filled_length = int(bar_length * downloaded // total)
-    bar = '█' * filled_length + '-' * (bar_length - filled_length)
 
     # 格式化速率（字节/秒 → KB/s/MB/s）
     speed_str = format_size(speed) + '/s'
     
     downloaded_str = format_size(downloaded)
     total_str = format_size(total)
-    # 输出进度条（覆盖当前行）
-    sys.stdout.write(f'\r下载进度：|{bar}| {percent:.1f}% ({downloaded_str}/{total_str}) 速率：{speed_str}')
+    # 输出进度（覆盖当前行）
+    sys.stdout.write(f'\r{percent:.1f}% ({downloaded_str}/{total_str}) {speed_str}')
     sys.stdout.flush()
 
 def check_file_integrity(file_path, expected_size):
@@ -71,7 +68,7 @@ def check_file_integrity(file_path, expected_size):
         return True
     return False
 
-def download_with_auto_resume(url, proxy=None, retry_interval=3):
+def download_with_auto_resume(url, proxy=None, retry_interval=3, ignore_ssl_errors=False):
     #   重试 + 无限续传 + 速率显示
     download_dir = get_download_path()
     filename = get_filename_from_url(url)
@@ -80,14 +77,16 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3):
 
     # 1. 获取文件总大小
     try:
-        head_response = requests.head(url, proxies=proxies, timeout=15, verify=False, allow_redirects=True)
+        head_response = requests.head(url, proxies=proxies, timeout=10, verify=False, allow_redirects=True)
         head_response.raise_for_status()
         file_size = int(head_response.headers.get('Content-Length', 0))
         if file_size == 0:
-            print('无法获取文件大小，下载失败')
+            if not ignore_ssl_errors:
+                print('无法获取文件大小，下载失败')
             return False
     except Exception as e:
-        print(f'获取文件信息失败：{e}')
+        if not ignore_ssl_errors:
+            print(f'获取文件信息失败：{e}')
         return False
 
     # 2. 初始化参数
@@ -136,7 +135,7 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3):
                 headers=headers,
                 proxies=proxies,
                 stream=True,
-                timeout=300,  # 5分钟超时
+                timeout=10,  # 10秒超时
                 verify=False,
                 allow_redirects=True
             )
@@ -174,7 +173,10 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3):
             # 计算本次尝试的最终速率
             speed = 0
             update_progress(resume_pos, file_size, speed)
-            print(f'\n第{attempt_count}次尝试失败：{e}')
+            if not ignore_ssl_errors:
+                print(f'\n第{attempt_count}次尝试失败：{e}')
+            else:
+                print(f'\n第{attempt_count}次尝试失败')
             print(f'当前已下载：{format_size(resume_pos)}/{format_size(file_size)}')
             print(f'等待{retry_interval}秒后自动重试...')
             time.sleep(retry_interval)  # 3秒重试间隔
@@ -188,7 +190,10 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3):
         except Exception as e:
             speed = 0
             update_progress(resume_pos, file_size, speed)
-            print(f'\n未知错误：{e}')
+            if not ignore_ssl_errors:
+                print(f'\n未知错误：{e}')
+            else:
+                print(f'\n未知错误')
             print(f'等待{retry_interval}秒后自动重试...')
             time.sleep(retry_interval)
 
@@ -200,12 +205,13 @@ def download_with_auto_resume(url, proxy=None, retry_interval=3):
 
 def main():
     parser = argparse.ArgumentParser(description='下载工具')
-    parser.add_argument('-l', '--link', required=True, help='下载链接（必填）')
-    parser.add_argument('-p', '--proxy', default=None, help='HTTP代理，格式如127.0.0.1:6666')
-    parser.add_argument('-r', '--retry-interval', type=int, default=3, help='重试间隔（秒），默认3')
+    parser.add_argument('-l', '--link', required=True, help='下载链接 (必填)')
+    parser.add_argument('-p', '--proxy', default=None, help='HTTP代理 格式: 127.0.0.1:6666')
+    parser.add_argument('-r', '--retry-interval', type=int, default=3, help='重试间隔')
+    parser.add_argument('-i', '--ignore-ssl-errors', action='store_true', help='忽略SSL警告且不显示下载失败原因')
     args = parser.parse_args()
 
-    download_with_auto_resume(args.link, args.proxy, args.retry_interval)
+    download_with_auto_resume(args.link, args.proxy, args.retry_interval, args.ignore_ssl_errors)
 
 if __name__ == '__main__':
     main()
